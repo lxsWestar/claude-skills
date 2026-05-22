@@ -269,19 +269,15 @@ class EstimateWorkbook:
         # Store for cross-sheet reference (e.g. Phase sheet)
         self._adjustment_cell_refs = cell_refs
 
-        # -- Calculated steps (each refs the just-written row above: self._row-1) --
-        steps = [
-            ('Step 1: PERT 純工数', f'=F{self._pert_total_row}', '全タスクの三点見積集計'),
-        ]
+        # -- Calculated steps: each step references the previous step's output row --
+        # step_start + 0 = Step 1, step_start + 1 = Step 2, etc.
         step_start = self._row
-        self._row += 1  # Step 1 written
-        steps.append(('Step 2: 技能係数調整後', f'=F{self._row-1}*{cell_refs["skill_coef"]}', ''))
-        self._row += 1  # Step 2 will occupy this row
-        steps.append(('Step 3: 管理工数加算後', f'=F{self._row-1}*(1+{cell_refs["mgmt_rate"]})', ''))
-        self._row += 1  # Step 3 will occupy this row
-        steps.append(('Step 4: リスクバッファ加算後 ★最終工数★',
-             f'=F{self._row-1}*(1+{cell_refs["risk_rate"]})', ''))
-        self._row = step_start  # reset to start writing
+        steps = [
+            ('Step 1: PERT 純工数',                         f'=F{self._pert_total_row}',                               '全タスクの三点見積集計'),
+            ('Step 2: 技能係数調整後',                       f'=F{step_start}*{cell_refs["skill_coef"]}',               ''),
+            ('Step 3: 管理工数加算後',                       f'=F{step_start+1}*(1+{cell_refs["mgmt_rate"]})',           ''),
+            ('Step 4: リスクバッファ加算後 ★最終工数★',     f'=F{step_start+2}*(1+{cell_refs["risk_rate"]})',           ''),
+        ]
         step_rows = {}
         for label, formula, note in steps:
             ws.cell(row=self._row, column=2, value=label)
@@ -298,16 +294,17 @@ class EstimateWorkbook:
                 step_rows['step4'] = self._row
             self._row += 1
 
-        # Anti-double-buffer check
+        # Anti-double-buffer check — actual Excel formula
         self._row += 1
         risk_ref = cell_refs.get("risk_rate", "0%")
-        ws.merge_cells(f'A{self._row}:H{self._row}')
-        ws[f'A{self._row}'] = (
-            f'✔ Anti-double-buffer: PERT使用→バッファ減半 | '
-            f'最終バッファ率={risk_ref} | '
-            f'=IF({risk_ref}>0.5,"⚠ 50%超！重複の可能性","✔ 50%未満OK")'
-        )
-        ws[f'A{self._row}'].font = self.styles.CHECK_FONT
+        ws.merge_cells(f'A{self._row}:F{self._row}')
+        ws.cell(row=self._row, column=1,
+                value=f'✔ Anti-double-buffer: PERT使用→バッファ減半 | 最終バッファ率=').font = self.styles.CHECK_FONT
+        ws.cell(row=self._row, column=7).value = f'={risk_ref}'
+        ws.cell(row=self._row, column=7).number_format = '0%'
+        check = ws.cell(row=self._row, column=8)
+        check.value = f'=IF({risk_ref}>0.5,"⚠ 50%超!重複可能性","✔ 50%未満 OK")'
+        check.font = self.styles.CHECK_FONT
 
         # Add CI section with 3 range types
         self._write_ci_section(cell_refs, step_rows)
@@ -478,8 +475,13 @@ class EstimateWorkbook:
 
         # Use cell references from WBS+PERT if available, else fall back to config values
         refs = getattr(self, '_adjustment_cell_refs', {})
+        skill_ref = refs.get('skill_coef', None)
         mgmt_ref = refs.get('mgmt_rate', None)
         risk_ref = refs.get('risk_rate', None)
+        if skill_ref:
+            skill_ref = f"'WBS+PERT'!{skill_ref}"
+        else:
+            skill_ref = self.config.get('skill_coef', 1.0)
         if mgmt_ref:
             mgmt_ref = f"'WBS+PERT'!{mgmt_ref}"
         else:
@@ -502,7 +504,7 @@ class EstimateWorkbook:
                 else:
                     ws.cell(row=r, column=3, value=f"='WBS+PERT'!F{self.subtotal_rows[sec]}")
                 ws.cell(row=r, column=3).number_format = '0.00'
-                ws.cell(row=r, column=4, value=f'=C{r}*(1+{mgmt_ref})*(1+{risk_ref})')
+                ws.cell(row=r, column=4, value=f'=C{r}*{skill_ref}*(1+{mgmt_ref})*(1+{risk_ref})')
                 ws.cell(row=r, column=4).number_format = '0.00'
                 ws.cell(row=r, column=5, value=phase.get('note', ''))
                 for c in range(1, 6):
