@@ -1,0 +1,23 @@
+name: Sync from personal repo
+
+on:
+  schedule:
+    # Every 4 hours, offset by 2h to avoid race with personal sync
+    - cron: "0 */4 * * *"
+  workflow_dispatch:
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 0
+
+      - name: Sync from li-xisheng/claude-skills
+        run: |
+          git remote add personal https://github.com/li-xisheng/claude-skills.git
+          git fetch personal master
+          git merge personal/master --allow-unrelated-histories -m "sync: merge from li-xisheng/claude-skills"
+          git push origin master
