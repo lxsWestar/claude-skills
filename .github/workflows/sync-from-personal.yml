@@ -3,7 +3,7 @@ name: Sync from personal repo
 on:
   schedule:
     # Every 4 hours, offset by 2h to avoid race with personal sync
-    - cron: "0 */4 * * *"
+    - cron: "30 */4 * * *"
   workflow_dispatch:
 
 jobs:
