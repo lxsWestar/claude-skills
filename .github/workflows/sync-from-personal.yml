@@ -2,8 +2,8 @@ name: Sync from personal repo
 
 on:
   schedule:
-    # Every 4 hours, offset by 2h to avoid race with company sync
-    - cron: "30 */4 * * *"
+    # Weekly, Monday 00:30 UTC (offset by 30m to avoid race with any other sync)
+    - cron: "30 0 * * 1"
   workflow_dispatch:
 
 permissions:
@@ -26,7 +26,10 @@ jobs:
           rm -rf /tmp/personal-claude-skills
           git clone --depth 1 https://github.com/li-xisheng/claude-skills.git /tmp/personal-claude-skills
 
-          rsync -a --delete \
+          # No --delete: this repo may hold skills that only exist here
+          # (personal-only additions), so files absent from the source
+          # repo are never removed — only added or updated.
+          rsync -a \
             --exclude='.git/' \
             --exclude='.github/workflows/' \
             /tmp/personal-claude-skills/ ./
