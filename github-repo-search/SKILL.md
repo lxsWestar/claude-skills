@@ -3,7 +3,7 @@ name: github-repo-search
 description: 在 GitHub 上找开源项目/参考实现/类似项目，按星数分波筛查，优先找到主流大项目，低星项目只在高星无匹配时才看且必须验证可用性。当用户说"帮我找开源项目""GitHub 上有没有类似的""找找 XX 的仓库""有没有现成实现""开源项目推荐""/github-search"时触发；开发中需要搜 GitHub 参考实现时也使用本方法。
 metadata:
   author: westarlsc
-  version: "1.1.0"
+  version: "1.1.1"
   based_on: yunshu0909/yunshu_skillshub coding/github-repo-search (V1.1)
 ---
 
@@ -30,19 +30,19 @@ metadata:
 ## 为什么单一渠道会漏
 
 每个渠道都有固定盲区，而且盲区不重合：
-- **GitHub 搜索**只匹配仓库名、描述、topic，不搜 README。实测："browser automation agent" 漏掉全部 6 个头部项目；"微信 聊天记录" 漏掉 4.2 万★的 LC044/WeChatMsg（描述为空）和 3.9k★的 WeChatDataAnalysis。
+- **GitHub 搜索**只匹配仓库名、描述、topic，不搜 README。多词组合查询常常一个头部项目都搜不到；描述为空的万星项目也会整个漏掉。
 - **网页搜索**能补回上面这些，但会混入 1★ 的仿冒仓库，且排名靠前。
-- **自身知识**覆盖不了训练截止后出现的新项目，而且容易只想到"成品"，想不到通用基础库。实测："唱歌采点"检索漏掉 9k★ 的 librosa、3.8k★ 的 aubio、2.2k★ 的 TarsosDSP——它们描述只写 "audio analysis"、没有 topic，关键词和 topic 搜索都搜不到，只能靠已知清单补。
-- **`--limit` 截断**：结果按星数排序，limit 太小会切掉刚好在阈值附近的项目（同一案例中 140★ 的 pitchy 排在 limit 10 之外）。
+- **自身知识**覆盖不了训练截止后出现的新项目，而且容易只想到"成品"，想不到通用基础库。通用基础库的描述往往只写"XX analysis/processing"这类泛称，也常常不设 topic，关键词和 topic 搜索都搜不到，只能靠已知清单补。
+- **`--limit` 截断**：结果按星数排序，limit 太小会切掉刚好在阈值附近的项目。
 
 所以召回要多路合并，并用"多路是否命中同一批项目"来判断是否找全。
 
 ## 第 1 波：高星（stars ≥ 1000），六路召回
 
 1. **已知头部清单**（最重要）：先凭自身知识按三层各列 3–5 个，逐个 `gh api repos/<owner>/<repo> --jq '"\(.stargazers_count) \(.full_name) \(.pushed_at) \(.license.spdx_id)"'` 核实存在、星数、活跃度和许可证。这一路专门补关键词搜不到的大项目。
-   - **成品/应用**：直接满足需求的软件（如"唱歌采点"→ UltraStar、Nightingale）
-   - **领域专用组件**：为这个领域做的库或模型（如音高检测 CREPE、basic-pitch）
-   - **通用基础库**：领域公认的底层库，描述往往很笼统（如音频分析 librosa、aubio、Essentia；平台 I/O 如 oboe）。用户可能自己开发或集成时，这一层不能省。
+   - **成品/应用**：直接满足需求、拿来就能用的软件
+   - **领域专用组件**：专为这个领域做的库或模型，解决需求中的某个核心环节
+   - **通用基础库**：领域公认的底层库（含平台 I/O 层），描述往往很笼统。用户可能自己开发或集成时，这一层不能省。
 2. **topic 搜索**：猜 2–4 个 topic 名（如 `browser-automation`、`web-scraping`、`llm-agent`）
    ```bash
    gh search repos --topic <topic> --stars ">=1000" --sort stars --limit 30 \
@@ -56,7 +56,7 @@ metadata:
    为省 token 可以只打印前若干行，但返回条数不要低于 30；末条星数仍明显高于本波下限时，说明还有截断，再翻一页（`--limit 60`）。
 4. **awesome 合集**：`gh search repos "awesome <主题>" --sort stars --limit 5`，读排名第一的合集的 README，提取里面列出的项目
 5. **网页搜索**：用 WebSearch 搜 2–3 组，如 `<主题> github open source`、`<主题> 开源 github 推荐`（中文领域必搜中文）、`best <主题> library 2026`。从结果中提取 `github.com/<owner>/<repo>` 链接，**逐个用 `gh api` 回查星数**，网页里的排名和描述不作数。
-   - **按领域的地区语言搜**：领域有明显地区特色时，加搜该地区语言（如"卡拉OK采点"→ 日文「カラオケ 採点」；"微信"→ 中文）。实测日文一组就补回 7 个英文、中文都没出现的项目。
+   - **按领域的地区语言搜**：领域起源于某个地区、或主要在某个地区流行时，加搜该地区语言。这类领域的项目常常只用当地语言写描述，英文和中文搜索都搜不到。
    - 结果里顺带提到的库（PR、issue、对比文章里的依赖名）也要回查，不只看标题里的仓库。
 6. **滚雪球**：对已确认匹配的前 2–3 个项目，读 README 中的 Alternatives / Comparison / Related projects / Inspired by / 致谢 段落，以及 awesome 合集中同类条目，把提到的仓库加入候选。大项目通常会和其他大项目对比，这一路专门补新出现、自己不知道的项目。
 
