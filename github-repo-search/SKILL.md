@@ -3,7 +3,7 @@ name: github-repo-search
 description: 在 GitHub 上找开源项目/参考实现/类似项目，按星数分波筛查，优先找到主流大项目，低星项目只在高星无匹配时才看且必须验证可用性。当用户说"帮我找开源项目""GitHub 上有没有类似的""找找 XX 的仓库""有没有现成实现""开源项目推荐""/github-search"时触发；开发中需要搜 GitHub 参考实现时也使用本方法。
 metadata:
   author: westarlsc
-  version: "1.0.0"
+  version: "1.1.0"
   based_on: yunshu0909/yunshu_skillshub coding/github-repo-search (V1.1)
 ---
 
@@ -25,30 +25,39 @@ metadata:
 
 拿不准时：涉及"要不要做/选哪个"的用深挖，只是"找个写法参考"的用快速。快速档发现了明显的大项目竞品时，提醒用户是否要升到深挖。
 
+中途升档（用户说"调高力度""再仔细点"）：保留已跑的结果，只补新档位缺的步骤，不从头重跑。
+
 ## 为什么单一渠道会漏
 
 每个渠道都有固定盲区，而且盲区不重合：
 - **GitHub 搜索**只匹配仓库名、描述、topic，不搜 README。实测："browser automation agent" 漏掉全部 6 个头部项目；"微信 聊天记录" 漏掉 4.2 万★的 LC044/WeChatMsg（描述为空）和 3.9k★的 WeChatDataAnalysis。
 - **网页搜索**能补回上面这些，但会混入 1★ 的仿冒仓库，且排名靠前。
-- **自身知识**覆盖不了训练截止后出现的新项目。
+- **自身知识**覆盖不了训练截止后出现的新项目，而且容易只想到"成品"，想不到通用基础库。实测："唱歌采点"检索漏掉 9k★ 的 librosa、3.8k★ 的 aubio、2.2k★ 的 TarsosDSP——它们描述只写 "audio analysis"、没有 topic，关键词和 topic 搜索都搜不到，只能靠已知清单补。
+- **`--limit` 截断**：结果按星数排序，limit 太小会切掉刚好在阈值附近的项目（同一案例中 140★ 的 pitchy 排在 limit 10 之外）。
 
 所以召回要多路合并，并用"多路是否命中同一批项目"来判断是否找全。
 
 ## 第 1 波：高星（stars ≥ 1000），六路召回
 
-1. **已知头部清单**（最重要）：先凭自身知识列出该领域公认的主流项目 5–10 个，逐个 `gh api repos/<owner>/<repo> --jq '"\(.stargazers_count) \(.full_name) \(.pushed_at)"'` 核实存在、星数和活跃度。这一路专门补关键词搜不到的大项目。
+1. **已知头部清单**（最重要）：先凭自身知识按三层各列 3–5 个，逐个 `gh api repos/<owner>/<repo> --jq '"\(.stargazers_count) \(.full_name) \(.pushed_at) \(.license.spdx_id)"'` 核实存在、星数、活跃度和许可证。这一路专门补关键词搜不到的大项目。
+   - **成品/应用**：直接满足需求的软件（如"唱歌采点"→ UltraStar、Nightingale）
+   - **领域专用组件**：为这个领域做的库或模型（如音高检测 CREPE、basic-pitch）
+   - **通用基础库**：领域公认的底层库，描述往往很笼统（如音频分析 librosa、aubio、Essentia；平台 I/O 如 oboe）。用户可能自己开发或集成时，这一层不能省。
 2. **topic 搜索**：猜 2–4 个 topic 名（如 `browser-automation`、`web-scraping`、`llm-agent`）
    ```bash
-   gh search repos --topic <topic> --stars ">=1000" --sort stars --limit 15 \
+   gh search repos --topic <topic> --stars ">=1000" --sort stars --limit 30 \
      --json fullName,stargazersCount,description,updatedAt
    ```
 3. **短关键词搜索**：每组只用 1–2 个词，多换几组同义词（中英文都试），不要堆 3 个以上的词
    ```bash
-   gh search repos "<1-2 个词>" --stars ">=1000" --archived=false --sort stars --limit 15 \
+   gh search repos "<1-2 个词>" --stars ">=1000" --archived=false --sort stars --limit 30 \
      --json fullName,stargazersCount,description,updatedAt
    ```
+   为省 token 可以只打印前若干行，但返回条数不要低于 30；末条星数仍明显高于本波下限时，说明还有截断，再翻一页（`--limit 60`）。
 4. **awesome 合集**：`gh search repos "awesome <主题>" --sort stars --limit 5`，读排名第一的合集的 README，提取里面列出的项目
 5. **网页搜索**：用 WebSearch 搜 2–3 组，如 `<主题> github open source`、`<主题> 开源 github 推荐`（中文领域必搜中文）、`best <主题> library 2026`。从结果中提取 `github.com/<owner>/<repo>` 链接，**逐个用 `gh api` 回查星数**，网页里的排名和描述不作数。
+   - **按领域的地区语言搜**：领域有明显地区特色时，加搜该地区语言（如"卡拉OK采点"→ 日文「カラオケ 採点」；"微信"→ 中文）。实测日文一组就补回 7 个英文、中文都没出现的项目。
+   - 结果里顺带提到的库（PR、issue、对比文章里的依赖名）也要回查，不只看标题里的仓库。
 6. **滚雪球**：对已确认匹配的前 2–3 个项目，读 README 中的 Alternatives / Comparison / Related projects / Inspired by / 致谢 段落，以及 awesome 合集中同类条目，把提到的仓库加入候选。大项目通常会和其他大项目对比，这一路专门补新出现、自己不知道的项目。
 
 合并去重后**逐个判断是否真正匹配需求**（看 description 和 README 开头，不只看关键词命中）。
@@ -90,12 +99,24 @@ stars < 10 的项目不列入结果。
 2. 每一波的结果概要（召回数 / 匹配数 / 未匹配原因）
 3. 推荐表格：
 
-| 仓库 | ★ | 最近更新 | 命中路数 | 是什么 + 为什么推荐 | 风险/限制 |
-|---|---:|---|---|---|---|
+| 仓库 | ★ | 最近更新 | 许可证 | 命中路数 | 是什么 + 为什么推荐 | 风险/限制 |
+|---|---:|---|---|---|---|---|
+
+   - 候选横跨多层时，按"成品 / 领域专用组件 / 通用基础库"分表。
+   - 用户可能把代码集成进自己的产品（尤其是闭源或商用）时，另起一栏把候选分成"宽松许可可直接集成（MIT/BSD/Apache/ISC/0BSD）"和"只能参考思路（GPL/AGPL/无许可证）"。无许可证 = 保留所有权利，不能当开源复用。许可证用 `gh api` 的 `license.spdx_id` 取，`NOASSERTION` 时读 LICENSE 文件。
 
 4. **是否已有成熟方案**：先用一句话回答"这个方向是否已经有成熟的主流项目覆盖了需求"。如果有，说明它覆盖了需求的哪些部分、哪些没覆盖，供用户判断"还要不要自己做"。
 5. 结论：最推荐哪个；若只能推荐低星项目，明确说明"该方向没有成熟的主流项目"。
 6. 召回可信度：重合度检查的结果，以及可能存在的遗漏。
+
+## 对照外部答案
+
+用户贴来另一个 AI 或他人的检索结果、要求"对照一下"时：
+
+1. 对方列的每个仓库都用 `gh api` 核实：是否存在、星数、许可证、最近推送；对方关于平台、维护状态、依赖的说法，读 README / release 资产确认。
+2. 分四组交付：**核实通过** / **有误或漏说**（如漏提 AGPL、维护停滞）/ **对方有、我方无** / **我方有、对方无**。
+3. "对方有、我方无"的每一项都要写出漏检原因（描述笼统无 topic、limit 截断、清单漏层、没搜某语言……），并判断它对需求的实际价值，不要因为被漏就默认重要。
+4. 漏检原因能归到本 skill 的某一路时，提示用户可以更新本 skill。
 
 ## 禁止
 
@@ -103,3 +124,4 @@ stars < 10 的项目不列入结果。
 - 采用网页搜索结果而不用 `gh api` 回查星数
 - 第 1 波没跑完就看低星项目
 - 未经验证就推荐 stars < 100 的项目
+- 用户要集成进产品时，推荐 GPL/AGPL/无许可证的仓库却不标明许可证限制
